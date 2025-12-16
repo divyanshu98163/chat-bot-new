@@ -1,169 +1,148 @@
 "use client";
 
-import { useState, useRef, useMemo, useEffect, FormEvent } from "react";
+import { useState, useEffect, useRef } from "react";
+import Image from "next/image";
 
-/* ================= DATASET ================= */
-const DATASET = [
-  {
-    id: "revenue",
-    keywords: "revenue income profit pricing subscription",
-    answer:
-      "We generate revenue through SaaS subscriptions, enterprise licensing, and consulting services.",
-  },
-  {
-    id: "customers",
-    keywords: "customers users clients audience target",
-    answer:
-      "Our main customers are SMBs, freelance developers, and educational institutions.",
-  },
-  {
-    id: "refund",
-    keywords: "refund return moneyback guarantee",
-    answer:
-      "We offer a 30-day money-back guarantee with no questions asked.",
-  },
-  {
-    id: "location",
-    keywords: "location address office headquarters",
-    answer:
-      "Our headquarters are located in Silicon Valley, USA.",
-  },
-  {
-    id: "support",
-    keywords: "support help contact email phone",
-    answer:
-      "You can contact us at help@business.com or call +1-800-555-0123.",
-  },
-];
-
-/* ================= SYNONYMS ================= */
-const SYNONYMS: Record<string, string[]> = {
-  revenue: ["income", "profit", "earnings", "pricing"],
-  refund: ["return", "moneyback", "guarantee"],
-  location: ["address", "office", "headquarters"],
-  support: ["help", "contact", "email", "phone"],
-  customers: ["users", "clients", "audience"],
+type Message = {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
 };
 
-/* ================= NLP HELPERS ================= */
-const tokenize = (text: string) => {
-  const words = text
-    .toLowerCase()
-    .replace(/[^\w\s]/g, "")
-    .split(/\s+/)
-    .filter(w => w.length > 2);
-
-  const expanded = [...words];
-
-  words.forEach(word => {
-    Object.entries(SYNONYMS).forEach(([key, values]) => {
-      if (values.includes(word)) expanded.push(key);
-    });
-  });
-
-  return expanded;
-};
-
-const calculateScore = (user: string[], keywords: string[]) => {
-  let score = 0;
-  user.forEach(word => {
-    if (keywords.includes(word)) score += 2;
-  });
-  return score / keywords.length;
-};
-
-/* ================= COMPONENT ================= */
-type Message = { role: "user" | "bot"; content: string };
-
-export default function OfflineChatbot() {
-  const [messages, setMessages] = useState<Message[]>([
-    { role: "bot", content: "Hello! Ask me about revenue, refunds, customers, or support." },
-  ]);
+export default function ChatPage() {
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const lastTopic = useRef<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-
-  /* Preprocess dataset once */
-  const processed = useMemo(
-    () =>
-      DATASET.map(d => ({
-        ...d,
-        tokens: tokenize(d.keywords),
-      })),
-    []
-  );
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isLoading]);
 
-  const findBestMatch = (query: string) => {
-    const userTokens = tokenize(query);
-    let best = null;
-    let maxScore = 0;
+  const sendMessage = async () => {
+    if (!input.trim()) return;
 
-    for (const item of processed) {
-      const score = calculateScore(userTokens, item.tokens);
-      if (score > maxScore) {
-        maxScore = score;
-        best = item;
+    const userMsg: Message = {
+      id: Date.now(),
+      role: "user",
+      content: input,
+    };
+
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
+    setInput("");
+    setIsLoading(true);
+
+    // 👉 REAL API CALL
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: updatedMessages }),
+    });
+
+    const reader = res.body?.getReader();
+    const decoder = new TextDecoder();
+
+    const aiMsg: Message = {
+      id: Date.now() + 1,
+      role: "assistant",
+      content: "",
+    };
+
+    setMessages((prev) => [...prev, aiMsg]);
+
+    let aiText = "";
+
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        aiText += decoder.decode(value);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === aiMsg.id ? { ...m, content: aiText } : m
+          )
+        );
       }
     }
 
-    if (!best && lastTopic.current) {
-      return processed.find(p => p.id === lastTopic.current) || null;
-    }
-
-    if (best) lastTopic.current = best.id;
-
-    return maxScore > 0.25 ? best : null;
+    setIsLoading(false);
   };
 
-  const sendMessage = (e: FormEvent) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-
-    setMessages(prev => [...prev, { role: "user", content: input }]);
-
-    const match = findBestMatch(input);
-    const reply = match
-      ? match.answer
-      : "I didn’t understand that. Try asking about revenue, refunds, or support.";
-
-    setMessages(prev => [...prev, { role: "bot", content: reply }]);
-    setInput("");
-  };
+  const clearChat = () => setMessages([]);
 
   return (
-    <main className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
-      <div className="w-full max-w-xl bg-slate-800 rounded-xl shadow-lg p-4 flex flex-col h-[80vh]">
-        <h1 className="text-center font-bold mb-3">Offline AI Chatbot</h1>
+    <div className="min-h-screen flex justify-center items-center bg-gray-100 p-4">
+      <div className="w-full max-w-md h-[80vh] bg-white rounded-2xl shadow-lg flex flex-col">
 
-        <div className="flex-1 overflow-y-auto space-y-2 mb-3">
-          {messages.map((m, i) => (
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 bg-yellow-400 rounded-t-2xl">
+          <div className="flex items-center gap-2">
+            <div className="relative w-10 h-10 rounded-full overflow-hidden">
+              <Image src="/logo.jpeg" alt="logo" fill className="object-cover" />
+            </div>
+            <span className="font-bold text-white">AI Chat</span>
+          </div>
+          <button
+            onClick={clearChat}
+            className="text-sm bg-red-500 text-white px-3 py-1 rounded-full"
+          >
+            Clear
+          </button>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 p-4 overflow-y-auto space-y-3 bg-gray-50">
+          {messages.length === 0 && (
+            <div className="bg-white p-3 rounded-xl w-fit border">
+              Hello! How can I help you?
+            </div>
+          )}
+
+          {messages.map((m) => (
             <div
-              key={i}
-              className={`p-3 rounded-lg max-w-[80%] ${m.role === "user"
-                  ? "ml-auto bg-indigo-600"
-                  : "mr-auto bg-slate-700"
-                }`}
+              key={m.id}
+              className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
             >
-              {m.content}
+              <div
+                className={`px-4 py-2 rounded-xl max-w-[70%] text-sm ${m.role === "user"
+                    ? "bg-yellow-400 text-white"
+                    : "bg-white border"
+                  }`}
+              >
+                {m.content}
+              </div>
             </div>
           ))}
+
+          {isLoading && (
+            <div className="bg-white px-4 py-2 rounded-xl w-fit border text-sm">
+              typing...
+            </div>
+          )}
+
           <div ref={bottomRef} />
         </div>
 
-        <form onSubmit={sendMessage} className="flex gap-2">
+        {/* Input */}
+        <div className="p-4 border-t flex gap-2">
           <input
             value={input}
-            onChange={e => setInput(e.target.value)}
-            placeholder="Type your question..."
-            className="flex-1 p-2 rounded bg-slate-900 border border-slate-700"
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Type message..."
+            className="flex-1 border rounded-full px-4 py-2 outline-none"
+            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
           />
-          <button className="bg-indigo-600 px-4 rounded">Send</button>
-        </form>
+          <button
+            onClick={sendMessage}
+            disabled={isLoading}
+            className="bg-yellow-400 text-white px-5 rounded-full font-semibold disabled:opacity-50"
+          >
+            Send
+          </button>
+        </div>
+
       </div>
-    </main>
+    </div>
   );
 }
